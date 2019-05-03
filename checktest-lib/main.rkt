@@ -1,5 +1,6 @@
 #lang racket/base
-(require (for-syntax racket/base syntax/parse)
+(require (for-syntax racket/base syntax/parse syntax/transformer)
+         racket/match
          racket/contract/base
          racket/struct
          racket/string
@@ -21,15 +22,19 @@
 (struct result:raised (e) #:transparent
   #:property prop:custom-write
   (make-constructor-style-printer (lambda (v) 'raise) (lambda (v) (list (result:raised-e v)))))
+
 (define (result:single? v)
   (cond [(result:values? v) (and (= (length (result:values-vs v)) 1))]
         [(result:raised? v) #f]
         [else #t]))
-(define (result:single v)
+(define (make-result:single v)
   (if (or (result:values? v) (result:raised? v)) (result:values (list v)) v))
 (define (result:single-value v)
   (cond [(result:values? v) (car (result:values-vs v))]
         [else v]))
+(define-match-expander result:single
+  (syntax-parser [(_ p) #'(? result:single? (app result:single-value p))])
+  (make-variable-like-transformer #'make-result:single))
 
 ;; call->result : (-> Any) -> Result
 (define (call->result proc)
@@ -57,12 +62,11 @@
 
 ;; apply-pred-checker : (Any -> Truth) Result -> Void
 (define (apply-pred-checker pred result)
-  (cond [(result:single? result)
-         (unless (pred (result:single-value result))
-           (fail "actual value does not satisfy predicate"
-                 'predicate pred))]
-        [else (fail "actual result not a single value"
-                    'predicate pred)]))
+  (match result
+    [(result:single value)
+     (unless (pred (result:single-value result))
+       (fail "actual value does not satisfy predicate" 'predicate pred))]
+    [_ (fail "actual result not a single value" 'predicate pred)]))
 
 ;; equal-checker : Result -> Checker
 (define (equal-checker expected-result)
@@ -75,29 +79,29 @@
 
 ;; mk-raise*-checker : (Listof (U Regexp (-> Any Truth))) -> Checker
 (define ((mk-raise*-checker rx/pred-list require-exn?) actual-result)
-  (cond [(result:raised? actual-result)
-         (define raised (result:raised-e actual-result))
-         (define raised-msg (if (exn? raised) (exn-message raised) ""))
-         (when (and require-exn? (not (exn? raised)))
-           (fail "actual result is not a raised exception"
-                 'predicates rx/pred-list))
-         (for ([rx/pred (in-list rx/pred-list)])
-           (cond [(regexp? rx/pred)
-                  (unless (exn? raised)
-                    (fail "actual result is raised non-exception value"
-                          'regexp rx/pred 'predicates rx/pred-list))
-                  (unless (regexp-match? rx/pred raised-msg)
-                    (fail "actual exception message does not match regexp"
-                          'regexp rx/pred 'predicates rx/pred-list))]
-                 [(procedure? rx/pred)
-                  (unless (rx/pred raised)
-                    (fail (if require-exn?
-                              "actual raised exception does not satisfy predicate"
-                              "actual raised value does not satisfy predicate")
-                          'predicate rx/pred 'predicates rx/pred-list))]))]
-        [else (fail (cond [require-exn? "actual result is not a raised exception"]
-                          [else "actual result is not a raised value"])
-                    'predicates rx/pred-list)]))
+  (match actual-result
+    [(result:raised raised)
+     (define raised-msg (if (exn? raised) (exn-message raised) ""))
+     (when (and require-exn? (not (exn? raised)))
+       (fail "actual result is not a raised exception"
+             'predicates rx/pred-list))
+     (for ([rx/pred (in-list rx/pred-list)])
+       (cond [(regexp? rx/pred)
+              (unless (exn? raised)
+                (fail "actual result is raised non-exception value"
+                      'regexp rx/pred 'predicates rx/pred-list))
+              (unless (regexp-match? rx/pred raised-msg)
+                (fail "actual exception message does not match regexp"
+                      'regexp rx/pred 'predicates rx/pred-list))]
+             [(procedure? rx/pred)
+              (unless (rx/pred raised)
+                (fail (if require-exn?
+                          "actual raised exception does not satisfy predicate"
+                          "actual raised value does not satisfy predicate")
+                      'predicate rx/pred 'predicates rx/pred-list))]))]
+    [_ (fail (cond [require-exn? "actual result is not a raised exception"]
+                   [else "actual result is not a raised value"])
+             'predicates rx/pred-list)]))
 
 (define current-fail
   (make-parameter (lambda (why info) (error 'fail "called outside of a check expression"))))
@@ -116,25 +120,6 @@
 
 (define current-check-context (make-parameter #f))
 (struct check-failure (why actual info ctx) #:transparent)
-
-(define (print-failure cf)
-  (printf "FAILURE: ~a\n" (check-failure-why cf))
-  (printf "actual: ~e\n" (check-failure-actual cf))
-  (let loop ([info (check-failure-info cf)])
-    (when (pair? info)
-      (printf "~a: ~e\n" (car info) (cadr info))
-      (loop (cddr info))))
-  (let loop ([i 0] [ctx (check-failure-ctx cf)])
-    (define (iprintf indent fmt . args)
-      (write-string (make-string indent #\space))
-      (apply printf fmt args))
-    (when ctx
-      (iprintf i "within another check:\n")
-      (let ([i (add1 i)])
-        (iprintf i "actual: ~e\n" (vector-ref ctx 0))
-        (iprintf i "checker: ~e\n" (vector-ref ctx 1))
-        (loop i (vector-ref ctx 2)))))
-  (void))
 
 (define-syntax check
   (syntax-parser
@@ -224,17 +209,16 @@
 (define (-test proc
                #:loc  loc    ;; (U source-location? #f)
                #:name name)  ;; (U string? 'auto #f)
-  (parameterize ((current-test-context
-                  (cons (hasheq 'name name 'loc loc)
-                        (current-test-context))))
+  (define ctx (cons (hasheq 'name name 'loc loc) (current-test-context)))
+  (parameterize ((current-test-context ctx))
     (with-handlers ([(lambda (e) #t)
-                     (lambda (e) (-test-handler e))])
+                     (lambda (e) (-test-handler ctx e))])
       (proc)
-      (-test-success))))
+      (void))))
 
-(define (-test-handler e)
+(define (-test-handler ctx e)
   (eprintf "----------------------------------------\n")
-  (eprintf "~a\n" (test-context->string (current-test-context)))
+  (eprintf "~a\n" (test-context->string ctx))
   (cond [(check-failure? e)
          (parameterize ((current-output-port (current-error-port)))
            (print-failure e))]
@@ -242,5 +226,27 @@
          (eprintf "ERROR\n~e\n" e)])
   (eprintf "----------------------------------------\n")
   (void))
+
+(define (print-failure cf)
+  (match cf
+    [(check-failure why actual info ctx)
+     (printf "FAILURE: ~a\n" why)
+     (printf "actual: ~e\n" actual)
+     (let loop ([info info])
+       (match info
+         [(list* key value rest) (printf "~a: ~e\n" key value) (loop rest)]
+         ['() (void)]))
+     (let loop ([i 0] [ctx (check-failure-ctx cf)])
+       (define (iprintf indent fmt . args)
+         (write-string (make-string indent #\space))
+         (apply printf fmt args))
+       (match ctx
+         [(vector actual checker ctx)
+          (iprintf i "within another check:\n")
+          (let ([i (add1 i)])
+            (iprintf i "actual: ~e\n" actual)
+            (iprintf i "checker: ~e\n" checker)
+            (loop i ctx))]
+         [#f (void)]))]))
 
 (define (-test-success) (void))
