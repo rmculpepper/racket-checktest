@@ -4,6 +4,7 @@
          racket/contract/base
          racket/struct
          racket/string
+         racket/format
          syntax/srcloc)
 (provide (all-defined-out))
 
@@ -65,16 +66,15 @@
   (match result
     [(result:single value)
      (unless (pred (result:single-value result))
-       (fail "actual value does not satisfy predicate" 'predicate pred))]
-    [_ (fail "actual result not a single value" 'predicate pred)]))
+       (fail "does not satisfy predicate" 'predicate pred))]
+    [_ (fail "not a single value" 'predicate pred)]))
 
 ;; equal-checker : Result -> Checker
 (define (equal-checker expected-result)
   (named-checker (lambda (actual-result)
                    ;; FIXME: specialize result:raised
                    (unless (equal? actual-result expected-result)
-                     (fail "actual result not equal to expected result"
-                           'expected expected-result)))
+                     (fail "not equal" 'expected expected-result)))
                  'expect-equal (list expected-result)))
 
 ;; mk-raise*-checker : (Listof (U Regexp (-> Any Truth))) -> Checker
@@ -83,25 +83,21 @@
     [(result:raised raised)
      (define raised-msg (if (exn? raised) (exn-message raised) ""))
      (when (and require-exn? (not (exn? raised)))
-       (fail "actual result is not a raised exception"
-             'predicates rx/pred-list))
+       (fail "result is not a raised exception"))
      (for ([rx/pred (in-list rx/pred-list)])
        (cond [(regexp? rx/pred)
               (unless (exn? raised)
-                (fail "actual result is raised non-exception value"
-                      'regexp rx/pred 'predicates rx/pred-list))
+                (fail "did not raise exception" 'regexp rx/pred))
               (unless (regexp-match? rx/pred raised-msg)
-                (fail "actual exception message does not match regexp"
-                      'regexp rx/pred 'predicates rx/pred-list))]
+                (fail "exception message does not match regexp" 'regexp rx/pred))]
              [(procedure? rx/pred)
               (unless (rx/pred raised)
                 (fail (if require-exn?
-                          "actual raised exception does not satisfy predicate"
-                          "actual raised value does not satisfy predicate")
-                      'predicate rx/pred 'predicates rx/pred-list))]))]
-    [_ (fail (cond [require-exn? "actual result is not a raised exception"]
-                   [else "actual result is not a raised value"])
-             'predicates rx/pred-list)]))
+                          "exception does not satisfy predicate"
+                          "raised value does not satisfy predicate")
+                      'predicate rx/pred))]))]
+    [_ (fail (cond [require-exn? "did not raise exception"]
+                   [else "did not raise value"]))]))
 
 (define current-fail
   (make-parameter (lambda (why info) (error 'fail "called outside of a check expression"))))
@@ -118,8 +114,18 @@
 ;; ============================================================
 ;; Check
 
+;; A CheckContext is one of
+;; - #f                                     -- empty context
+;; - (vector Result Checker CheckContext)   -- nested check
+;; FIXME: allow (cons (cons Symbol Any) CheckContext), to let user code
+;; (eg, predicate) attach information to nested check.
 (define current-check-context (make-parameter #f))
-(struct check-failure (why actual info ctx) #:transparent)
+
+(define-syntax-rule (with-info ([k v] ...) . body)
+  (parameterize ((current-check-context (list* (~@ k v) ... (current-check-context))))
+    . body))
+
+(struct check-failure (why info ctx) #:transparent)
 
 (define-syntax check
   (syntax-parser
@@ -135,12 +141,12 @@
 (define (-check actual-thunk checkers)
   (define check-ctx (current-check-context))
   (define actual (call->result actual-thunk))
-  (define (fail-here why info)
-    (raise (check-failure why actual info check-ctx)))
   (for ([checker (in-list checkers)])
+    (define ctx (vector actual checker check-ctx))
+    (define (fail-here why info)
+      (raise (check-failure why info ctx)))
     (parameterize ((current-fail fail-here)
-                   (current-check-context
-                    (vector actual checker check-ctx)))
+                   (current-check-context ctx))
       (apply-checker checker actual))))
 
 ;; ============================================================
@@ -242,26 +248,45 @@
   (eprintf "----------------------------------------\n")
   (void))
 
-(define (print-failure cf)
-  (match cf
-    [(check-failure why actual info ctx)
-     (printf "FAILURE: ~a\n" why)
-     (printf "actual: ~e\n" actual)
-     (let loop ([info info])
-       (match info
-         [(list* key value rest) (printf "~a: ~e\n" key value) (loop rest)]
-         ['() (void)]))
-     (let loop ([i 0] [ctx (check-failure-ctx cf)])
-       (define (iprintf indent fmt . args)
-         (write-string (make-string indent #\space))
-         (apply printf fmt args))
-       (match ctx
-         [(vector actual checker ctx)
-          (iprintf i "within another check:\n")
-          (let ([i (add1 i)])
-            (iprintf i "actual: ~e\n" actual)
-            (iprintf i "checker: ~e\n" checker)
-            (loop i ctx))]
-         [#f (void)]))]))
+;; (kv1 ...) (list* kv2 ... (vector a1 c1 (list* kv3 ... (vector a3 c3 _))))
+;; [-------]                       [-----]
+;;                 [--------]                                   [-----]
 
-(define (-test-success) (void))
+(define (print-failure cf)
+  (define (print-ctx i ctx)
+    (when (pair? ctx) (iprintf i "with context info:\n"))
+    (let loop ([ctx ctx])
+      (match ctx
+        [(list* key value rest)
+         (print-kv (+ i INDENT) key value)
+         (loop rest)]
+        [(vector actual checker ctx)
+         (iprintf i "within another check:\n")
+         (print-kv (+ i INDENT) "actual" actual)
+         (print-kv (+ i INDENT) "checker" checker)
+         (print-ctx (+ i INDENT) ctx)]
+        [#f (void)])))
+  (match cf
+    [(check-failure why info ctx)
+     (printf "~a: ~a\n" (~a #:width KWIDTH "FAILURE") why)
+     (match ctx
+       [(vector actual checker ctx)
+        (print-kv 0 "actual" actual)
+        (let loop ([info info])
+          (match info
+            [(list* key value rest)
+             (print-kv 0 key value)
+             (loop rest)]
+            ['() (void)]))
+        (print-kv 0 "checker" checker)
+        (print-ctx 0 ctx)])]))
+
+(define KWIDTH 10)
+(define INDENT 2)
+
+(define (iprintf indent fmt . args)
+  (write-string (make-string indent #\space))
+  (apply printf fmt args))
+
+(define (print-kv i k v)
+  (printf "~a~a: ~e\n" (make-string i #\space) (~a #:min-width KWIDTH k) v))
