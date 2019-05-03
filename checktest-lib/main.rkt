@@ -206,6 +206,9 @@
                         [else "???"])))
                " > "))
 
+;; A TestAround is a procedure ((-> Void) -> Void).
+(define current-test-arounds (make-parameter null))
+
 (define (-test proc
                #:loc  loc    ;; (U source-location? #f)
                #:name name)  ;; (U string? 'auto #f)
@@ -213,8 +216,20 @@
   (parameterize ((current-test-context ctx))
     (with-handlers ([(lambda (e) #t)
                      (lambda (e) (-test-handler ctx e))])
-      (proc)
+      (call/arounds (current-test-arounds) proc)
       (void))))
+
+(define (call/arounds arounds proc)
+  (match arounds
+    [(cons around arounds)
+     (around (lambda () (call/arounds arounds proc)))]
+    ['() (proc)]))
+
+(define ((make-selective-execution-around name-pred) proc)
+  ;; FIXME
+  (cond [(name-pred (hash-ref (car (current-test-context)) 'name))
+         (proc)]
+        [else (void)]))
 
 (define (-test-handler ctx e)
   (eprintf "----------------------------------------\n")
