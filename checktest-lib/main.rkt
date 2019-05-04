@@ -99,11 +99,6 @@
     [_ (fail (cond [require-exn? "did not raise exception"]
                    [else "did not raise value"]))]))
 
-(define current-fail
-  (make-parameter (lambda (why info) (error 'fail "called outside of a check expression"))))
-
-(define (fail why . info) ((current-fail) why info))
-
 (define-syntax-rule (expect-equal expected)
   (equal-checker (call->result (lambda () (#%expression expected)))))
 (define (expect-raise . pred/rx-list)
@@ -127,6 +122,9 @@
 
 (struct check-failure (why info ctx) #:transparent)
 
+(define (fail why . info)
+  (raise (check-failure why info (current-check-context))))
+
 (define-syntax check
   (syntax-parser
     [(_ actual:expr checker:expr ...)
@@ -143,10 +141,7 @@
   (define actual (call->result actual-thunk))
   (for ([checker (in-list checkers)])
     (define ctx (vector actual checker check-ctx))
-    (define (fail-here why info)
-      (raise (check-failure why info ctx)))
-    (parameterize ((current-fail fail-here)
-                   (current-check-context ctx))
+    (parameterize ((current-check-context ctx))
       (apply-checker checker actual))))
 
 ;; ============================================================
@@ -248,10 +243,6 @@
   (eprintf "----------------------------------------\n")
   (void))
 
-;; (kv1 ...) (list* kv2 ... (vector a1 c1 (list* kv3 ... (vector a3 c3 _))))
-;; [-------]                       [-----]
-;;                 [--------]                                   [-----]
-
 (define (print-failure cf)
   (define (print-ctx i ctx)
     (when (pair? ctx) (iprintf i "with context info:\n"))
@@ -269,16 +260,21 @@
   (match cf
     [(check-failure why info ctx)
      (printf "~a: ~a\n" (~a #:width KWIDTH "FAILURE") why)
+     (define (print-info)
+       (let loop ([info info])
+         (match info
+           [(list* key value rest)
+            (print-kv 0 key value)
+            (loop rest)]
+           ['() (void)])))
      (match ctx
        [(vector actual checker ctx)
         (print-kv 0 "actual" actual)
-        (let loop ([info info])
-          (match info
-            [(list* key value rest)
-             (print-kv 0 key value)
-             (loop rest)]
-            ['() (void)]))
+        (print-info)
         (print-kv 0 "checker" checker)
+        (print-ctx 0 ctx)]
+       [_
+        (print-info)
         (print-ctx 0 ctx)])]))
 
 (define KWIDTH 10)
