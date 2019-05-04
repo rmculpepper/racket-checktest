@@ -210,21 +210,29 @@
 ;; A TestAround is a procedure ((-> Void) -> Void).
 (define current-test-arounds (make-parameter null))
 
+;; A TestListener is (TestContext TestEvent Any -> Void)
+;; where TestEvents = 'enter | 'start | 'success | 'catch
+(define current-test-listener
+  (make-parameter (lambda (c e a) (default-test-listener c e a))))
+
+(define (signal ctx event [arg #f])
+  ((current-test-listener) ctx event arg))
+
 (define (-test proc
                #:loc  loc    ;; (U source-location? #f)
                #:name name)  ;; (U string? 'auto #f)
   (define ctx (cons (hasheq 'name name 'loc loc) (current-test-context)))
+  (signal ctx 'enter)
   (parameterize ((current-test-context ctx))
     (with-handlers ([(lambda (e) #t)
-                     (lambda (e) (-test-handler ctx e))])
-      (call/arounds (current-test-arounds) proc)
+                     (lambda (e) (signal ctx 'catch e))])
+      (let loop ([arounds (current-test-arounds)])
+        (match arounds
+          [(cons around arounds)
+           (around (lambda () (loop arounds)))]
+          ['() (begin (signal ctx 'begin) (proc))]))
+      (signal ctx 'success)
       (void))))
-
-(define (call/arounds arounds proc)
-  (match arounds
-    [(cons around arounds)
-     (around (lambda () (call/arounds arounds proc)))]
-    ['() (proc)]))
 
 (define ((make-selective-execution-around name-pred) proc)
   ;; FIXME
@@ -232,16 +240,19 @@
          (proc)]
         [else (void)]))
 
-(define (-test-handler ctx e)
-  (eprintf "----------------------------------------\n")
-  (eprintf "~a\n" (test-context->string ctx))
-  (cond [(check-failure? e)
-         (parameterize ((current-output-port (current-error-port)))
-           (print-failure e))]
-        [else
-         (eprintf "ERROR\n~e\n" e)])
-  (eprintf "----------------------------------------\n")
-  (void))
+(define (default-test-listener ctx event arg)
+  (case event
+    [(catch)
+     (eprintf "----------------------------------------\n")
+     (eprintf "~a\n" (test-context->string ctx))
+     (cond [(check-failure? arg)
+            (parameterize ((current-output-port (current-error-port)))
+              (print-failure arg))]
+           [else
+            (eprintf "ERROR\n~e\n" arg)])
+     (eprintf "----------------------------------------\n")
+     (void)]
+    [else (void)]))
 
 (define (print-failure cf)
   (define (print-ctx i ctx)
