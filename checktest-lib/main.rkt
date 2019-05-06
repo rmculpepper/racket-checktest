@@ -332,5 +332,26 @@
   (write-string (make-string indent #\space))
   (apply printf fmt args))
 
+;; (define (print-kv i k v)
+;;   (printf "~a~a: ~e\n" (make-string i #\space) (~a #:min-width KWIDTH k) v))
+
+(require racket/pretty)
+
 (define (print-kv i k v)
-  (printf "~a~a: ~e\n" (make-string i #\space) (~a #:min-width KWIDTH k) v))
+  (define label (string-append (make-string i #\space) (~a #:min-width KWIDTH k) ": "))
+  (pretty-print-with-label label v))
+
+(define (pretty-print-with-label label v)
+  (define label-len (string-length label))
+  (define spacer (make-string label-len #\space))
+  (parameterize ((pretty-print-print-line
+                  (lambda (lineno out _ll _w)
+                    (cond [(eq? lineno 0)
+                           (write-string label out)
+                           label-len]
+                          [lineno
+                           (write-string "\n" out)
+                           (write-string spacer out)
+                           label-len]
+                          [else (write-string "\n" out) 0]))))
+    (pretty-print v)))
