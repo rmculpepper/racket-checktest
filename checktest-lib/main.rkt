@@ -56,7 +56,9 @@
 (struct named-checker checker (name args)
   #:property prop:custom-write
   (make-constructor-style-printer (lambda (self) (named-checker-name self))
-                                  (lambda (self) (named-checker-args self))))
+                                  (lambda (self)
+                                    (or (named-checker-args self)
+                                        (list (unquoted-printing-string "..."))))))
 
 ;; apply-checker : Checker Result -> Void
 (define (apply-checker c result)
@@ -77,7 +79,7 @@
                    ;; FIXME: specialize result:raised
                    (unless (equal? actual-result expected-result)
                      (fail "not equal" 'expected expected-result)))
-                 'expect-equal (list expected-result)))
+                 'expect-equal #f))
 
 ;; mk-raise*-checker : (Listof (U Regexp (-> Any Truth))) -> Checker
 (define ((mk-raise*-checker rx/pred-list require-exn?) actual-result)
