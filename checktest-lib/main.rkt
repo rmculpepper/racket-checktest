@@ -1,10 +1,12 @@
 #lang racket/base
 (require (for-syntax racket/base syntax/parse syntax/transformer)
+         racket/list
          racket/match
          racket/contract/base
          racket/struct
          racket/string
          racket/format
+         racket/path
          syntax/srcloc)
 (provide (all-defined-out))
 
@@ -120,7 +122,7 @@
   (parameterize ((current-check-context (list* (~@ k v) ... (current-check-context))))
     . body))
 
-(struct check-failure (why info ctx) #:transparent)
+(struct check-failure (why info ctx))
 
 (define (fail why . info)
   (raise (check-failure why info (current-check-context))))
@@ -143,6 +145,9 @@
     (define ctx (vector actual checker check-ctx))
     (parameterize ((current-check-context ctx))
       (apply-checker checker actual))))
+
+(struct skip (why))
+(define (skip-test [why #f]) (raise (skip why)))
 
 ;; ============================================================
 ;; Tests
@@ -177,35 +182,29 @@
              #:with location #'loc.c)
     (pattern (~seq #:location-syntax term)
              #:with location (stx->loc-expr #'term)))
+  (define-splicing-syntax-class test-pre-clause
+    (pattern (~seq #:pre pre:expr)))
   )
 
 (define-syntax test
   (syntax-parser
     [(_ (~alt (~optional n:test-name-clause)
-              (~optional loc:test-loc-clause)) ...
+              (~optional loc:test-loc-clause)
+              (~optional pre:test-pre-clause)) ...
         body:expr ...)
      #`(-test #:name (~? n.name #f)
               #:loc (~? loc.location #,(stx->loc-expr this-syntax))
+              #:pre (~? (lambda () (#%expression pre.pre)) #f)
               (lambda () body ... (void)))]))
 
 (define-syntax tests
   (syntax-parser
     [(_ e:expr ...)
-     #`(begin (test e) ...)]))
+     #`(begin (test #:location-syntax e e) ...)]))
 
 ;; A TestContext is (listof TestFrame)
 ;; A TestFrame is (hash 'name (U String #f) 'loc (U source-location? #f))
 (define current-test-context (make-parameter null))
-
-(define (test-context->string ctx)
-  (string-join (reverse
-                (for/list ([frame (in-list ctx)])
-                  (cond [(hash-ref frame 'name #f)
-                         => (lambda (name) name)]
-                        [(hash-ref frame 'loc #f)
-                         => (lambda (loc) (source-location->string loc))]
-                        [else "???"])))
-               " > "))
 
 ;; A TestAround is a procedure ((-> Void) -> Void).
 (define current-test-arounds (make-parameter null))
@@ -220,7 +219,8 @@
 
 (define (-test proc
                #:loc  loc    ;; (U source-location? #f)
-               #:name name)  ;; (U string? 'auto #f)
+               #:name name   ;; (U string? 'auto #f)
+               #:pre pre-thunk)
   (define ctx (cons (hasheq 'name name 'loc loc) (current-test-context)))
   (signal ctx 'enter)
   (parameterize ((current-test-context ctx))
@@ -230,7 +230,10 @@
         (match arounds
           [(cons around arounds)
            (around (lambda () (loop arounds)))]
-          ['() (begin (signal ctx 'begin) (proc))]))
+          ['()
+           (when pre-thunk (pre-thunk))
+           (signal ctx 'begin)
+           (proc)]))
       (signal ctx 'success)
       (void))))
 
@@ -243,16 +246,50 @@
 (define (default-test-listener ctx event arg)
   (case event
     [(catch)
-     (eprintf "----------------------------------------\n")
-     (eprintf "~a\n" (test-context->string ctx))
      (cond [(check-failure? arg)
+            (eprintf "----------------------------------------\n")
+            (eprintf "~a\n" (test-context->string ctx))
             (parameterize ((current-output-port (current-error-port)))
-              (print-failure arg))]
+              (print-failure arg))
+            (eprintf "----------------------------------------\n")]
+           [(skip? arg) (void)]
            [else
-            (eprintf "ERROR\n~e\n" arg)])
-     (eprintf "----------------------------------------\n")
-     (void)]
+            (eprintf "----------------------------------------\n")
+            (eprintf "ERROR\n~e\n" arg)
+            (eprintf "----------------------------------------\n")])]
     [else (void)]))
+
+(define ((pretty-test-listener [levels 3]) ctx event arg)
+  (define (prefix char)
+    (define s (make-string (max 1 levels) #\space))
+    (string-set! s (sub1 (max 1 (min levels (length ctx)))) char)
+    s)
+  (define (test-name)
+    (define len (+ 1 (max 0 (- (length ctx) levels))))
+    (test-context->string (take ctx len)))
+  (case event
+    [(begin)
+     (eprintf "~a running ~a\n" (prefix #\+) (test-name))]
+    [(catch)
+     (cond [(skip? arg)
+            (eprintf "~a skipping ~a\n" (prefix #\-) (test-name))]
+           [else (default-test-listener ctx event arg)])]
+    [else (void)]))
+
+(define (test-context->string ctx)
+  (string-join (reverse
+                (for/list ([frame (in-list ctx)])
+                  (cond [(hash-ref frame 'name #f)
+                         => (lambda (name) name)]
+                        [(hash-ref frame 'loc #f)
+                         => (lambda (loc)
+                              (format "~a:~a"
+                                      (let ([src (source-location-source loc)])
+                                        (cond [(path? src) (file-name-from-path src)]
+                                              [else (or src '?)]))
+                                      (or (source-location-line loc) '?)))]
+                        [else "???"])))
+               " > "))
 
 (define (print-failure cf)
   (define (print-ctx i ctx)
