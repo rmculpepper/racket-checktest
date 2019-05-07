@@ -3,6 +3,7 @@
          racket/list
          racket/match
          racket/contract/base
+         racket/pretty
          racket/struct
          racket/string
          racket/format
@@ -334,26 +335,19 @@
   (write-string (make-string indent #\space))
   (apply printf fmt args))
 
-;; (define (print-kv i k v)
-;;   (printf "~a~a: ~e\n" (make-string i #\space) (~a #:min-width KWIDTH k) v))
+;; pretty-printing trick borrowed from pretty-format pkg by Alex Knauth
+(struct formatted (fmt vs)
+  #:property prop:custom-write
+  (lambda (this out mode) (apply fprintf out (formatted-fmt this) (formatted-vs this))))
 
-(require racket/pretty)
+(define current-test-value-style (make-parameter 'short))
 
 (define (print-kv i k v)
-  (define label (string-append (make-string i #\space) (~a #:min-width KWIDTH k) ": "))
-  (pretty-print-with-label label v))
-
-(define (pretty-print-with-label label v)
-  (define label-len (string-length label))
-  (define spacer (make-string label-len #\space))
-  (parameterize ((pretty-print-print-line
-                  (lambda (lineno out _ll _w)
-                    (cond [(eq? lineno 0)
-                           (write-string label out)
-                           label-len]
-                          [lineno
-                           (write-string "\n" out)
-                           (write-string spacer out)
-                           label-len]
-                          [else (write-string "\n" out) 0]))))
-    (pretty-print v)))
+  (define space (make-string i #\space))
+  (define label (~a #:min-width KWIDTH k))
+  (case (current-test-value-style)
+    [(pretty)
+     (pretty-print (formatted "~a~a: ~v" (list space label v)))
+     (when (eq? (pretty-print-columns) 'infinity) (newline))]
+    [(full) (printf "~a~a: ~v\n" space label v)]
+    [else (printf "~a~a: ~e\n" space label v)]))
