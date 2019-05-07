@@ -1,5 +1,11 @@
 #lang racket/base
 (require "main.rkt")
+(require racket/list)
+
+#;
+(current-test-arounds
+ (list (make-selective-execution-around
+        (lambda (name) (and name (regexp-match? #rx"printing" name))))))
 
 (test
  #:name "here"
@@ -57,8 +63,6 @@
                       (test #:name "nested"
                         (check-equal 'a 'a)))))))
 
-
-(require racket/list)
 (test #:name "printer2"
   (define xs (range 1000))
   (check-equal xs (cdr xs)))

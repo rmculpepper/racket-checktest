@@ -369,6 +369,8 @@
     [(full) (printf "~a~a: ~v\n" space label v)]
     [else (printf "~a~a: ~e\n" space label v)]))
 
+;; ============================================================
+
 (define ((make-selective-execution-around name-pred) proc)
   ;; FIXME
   (cond [(name-pred (hash-ref (car (current-test-context)) 'name))
