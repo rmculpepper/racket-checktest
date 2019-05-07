@@ -89,10 +89,6 @@
 (define current-test-listener
   (make-parameter (lambda (c e a) (default-test-listener c e a))))
 
-;; signal : TestContext TestEvent Any -> Void
-(define (signal ctx event [arg #f])
-  ((current-test-listener) ctx event arg))
-
 ;; current-test-value-style : parameter of (U 'short 'full 'pretty)
 (define current-test-value-style (make-parameter 'short))
 
@@ -243,10 +239,13 @@
                #:name name   ;; (U string? 'auto #f)
                #:pre pre-thunk)
   (define ctx (cons (hasheq 'name name 'loc loc) (current-test-context)))
+  (define nested? (pair? (cdr ctx)))
   (signal ctx 'enter)
   (parameterize ((current-test-context ctx))
     (with-handlers ([(lambda (e) #t)
-                     (lambda (e) (signal ctx 'catch e))])
+                     (lambda (e)
+                       (cond [(caught? e) (raise (if nested? e (caught-v e)))]
+                             [else (signal ctx 'catch e)]))])
       (let loop ([arounds (current-test-arounds)])
         (match arounds
           [(cons around arounds)
@@ -258,6 +257,15 @@
       (signal ctx 'success)
       (void))))
 
+;; wrapper for exceptions in framework code so (test _) doesn't catch them; they
+;; should actually escape and halt execution
+(struct caught (v))
+(define (call/catch proc)
+  (with-handlers ([(lambda (e) #t) (lambda (e) (raise (caught e)))]) (proc)))
+
+;; signal : TestContext TestEvent Any -> Void
+(define (signal ctx event [arg #f])
+  (call/catch (lambda () ((current-test-listener) ctx event arg))))
 
 ;; ============================================================
 
@@ -373,6 +381,6 @@
 
 (define ((make-selective-execution-around name-pred) proc)
   ;; FIXME
-  (cond [(name-pred (hash-ref (car (current-test-context)) 'name))
+  (cond [(call/catch (lambda () (name-pred (hash-ref (car (current-test-context)) 'name))))
          (proc)]
         [else (void)]))
