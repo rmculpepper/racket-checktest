@@ -66,3 +66,7 @@
 (test #:name "printer2"
   (define xs (range 1000))
   (check-equal xs (cdr xs)))
+
+(test #:name "sleepy"
+  (test (sleep 2))
+  (test (printf "aaaargh!\n")))

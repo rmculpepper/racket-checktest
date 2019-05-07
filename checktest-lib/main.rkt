@@ -242,7 +242,7 @@
   (define nested? (pair? (cdr ctx)))
   (signal ctx 'enter)
   (parameterize ((current-test-context ctx))
-    (with-handlers ([(lambda (e) #t)
+    (with-handlers ([(lambda (e) (not (exn:break? e)))
                      (lambda (e)
                        (cond [(caught? e) (raise (if nested? e (caught-v e)))]
                              [else (signal ctx 'catch e)]))])
