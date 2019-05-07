@@ -264,37 +264,41 @@
 (define KWIDTH 10)
 (define INDENT 2)
 
+(define current-test-display-levels (make-parameter #f))
+
 (define (default-test-listener ctx event arg)
+  (define levels (current-test-display-levels))
+  (define (full-test-name) (test-context->string ctx))
+  (define (short-test-name)
+    (cond [(exact-positive-integer? levels)
+           (let ([levels (if (exact-positive-integer? levels) levels 1)])
+             (define len (- (length ctx) (sub1 levels)))
+             (test-context->string (take ctx (max 1 len))))]
+          [else (full-test-name)]))
+  (define (prefix char)
+    (cond [(exact-positive-integer? levels)
+           (define s (make-string (add1 levels) #\space))
+           (string-set! s (sub1 (min levels (length ctx))) char)
+           s]
+          [else ""]))
   (case event
+    [(begin)
+     (when levels
+       (eprintf "~arunning ~a\n" (prefix #\+) (short-test-name)))]
     [(catch)
-     (cond [(check-failure? arg)
+     (cond [(skip? arg)
+            (when levels
+              (eprintf "~askipping ~a\n" (prefix #\-) (short-test-name)))]
+           [(check-failure? arg)
             (eprintf "----------------------------------------\n")
-            (eprintf "~a\n" (test-context->string ctx))
+            (eprintf "~a\n" (full-test-name))
             (parameterize ((current-output-port (current-error-port)))
               (print-failure arg))
             (eprintf "----------------------------------------\n")]
-           [(skip? arg) (void)]
            [else
             (eprintf "----------------------------------------\n")
             (eprintf "ERROR\n~e\n" arg)
             (eprintf "----------------------------------------\n")])]
-    [else (void)]))
-
-(define ((pretty-test-listener [levels 3]) ctx event arg)
-  (define (prefix char)
-    (define s (make-string (max 1 levels) #\space))
-    (string-set! s (sub1 (max 1 (min levels (length ctx)))) char)
-    s)
-  (define (test-name)
-    (define len (+ 1 (max 0 (- (length ctx) levels))))
-    (test-context->string (take ctx len)))
-  (case event
-    [(begin)
-     (eprintf "~a running ~a\n" (prefix #\+) (test-name))]
-    [(catch)
-     (cond [(skip? arg)
-            (eprintf "~a skipping ~a\n" (prefix #\-) (test-name))]
-           [else (default-test-listener ctx event arg)])]
     [else (void)]))
 
 (define (test-context->string ctx)
