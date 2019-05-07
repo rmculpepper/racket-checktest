@@ -48,6 +48,56 @@
 
 
 ;; ============================================================
+;; Context and communication
+
+;; ----------------------------------------
+;; Check-to-test
+
+(struct check-failure (why info ctx))
+(struct skip (why))
+
+(define (fail why . info)
+  (raise (check-failure why info (current-check-context))))
+
+(define (skip-test [why #f]) (raise (skip why)))
+
+;; ----------------------------------------
+;; Check info
+
+;; A CheckContext is one of
+;; - #f                                     -- empty context
+;; - (vector Result Checker CheckContext)   -- nested check
+;; - (list* Symbol Any CheckContext)        -- user context info
+(define current-check-context (make-parameter #f))
+
+(define-syntax-rule (with-info ([k v] ...) . body)
+  (parameterize ((current-check-context (list* (~@ k v) ... (current-check-context))))
+    . body))
+
+;; ----------------------------------------
+;; Testing context
+
+;; A TestContext is (listof TestFrame)
+;; A TestFrame is (hash 'name (U String #f) 'loc (U source-location? #f))
+(define current-test-context (make-parameter null))
+
+;; A TestAround is a procedure ((-> Void) -> Void).
+(define current-test-arounds (make-parameter null))
+
+;; A TestListener is (TestContext TestEvent Any -> Void)
+;; where TestEvents = 'enter | 'start | 'success | 'catch
+(define current-test-listener
+  (make-parameter (lambda (c e a) (default-test-listener c e a))))
+
+;; signal : TestContext TestEvent Any -> Void
+(define (signal ctx event [arg #f])
+  ((current-test-listener) ctx event arg))
+
+;; current-test-value-style : parameter of (U 'short 'full 'pretty)
+(define current-test-value-style (make-parameter 'short))
+
+
+;; ============================================================
 ;; Checkers
 
 ;; An Checker is one of
@@ -111,35 +161,15 @@
 (define (expect-raise* . pred/rx-list)
   (named-checker (mk-raise*-checker pred/rx-list #f) 'expect-raise* pred/rx-list))
 
+
 ;; ============================================================
 ;; Check
-
-;; A CheckContext is one of
-;; - #f                                     -- empty context
-;; - (vector Result Checker CheckContext)   -- nested check
-;; FIXME: allow (cons (cons Symbol Any) CheckContext), to let user code
-;; (eg, predicate) attach information to nested check.
-(define current-check-context (make-parameter #f))
-
-(define-syntax-rule (with-info ([k v] ...) . body)
-  (parameterize ((current-check-context (list* (~@ k v) ... (current-check-context))))
-    . body))
-
-(struct check-failure (why info ctx))
-
-(define (fail why . info)
-  (raise (check-failure why info (current-check-context))))
 
 (define-syntax check
   (syntax-parser
     [(_ actual:expr checker:expr ...)
      #'(-check (lambda () (#%expression actual))
                (list checker ...))]))
-
-(define-syntax-rule (check-equal actual expected)
-  (check actual (expect-equal expected)))
-(define-syntax-rule (check-raise actual pred/rx ...)
-  (check actual (expect-raise pred/rx ...)))
 
 (define (-check actual-thunk checkers)
   (define check-ctx (current-check-context))
@@ -149,8 +179,11 @@
     (parameterize ((current-check-context ctx))
       (apply-checker checker actual))))
 
-(struct skip (why))
-(define (skip-test [why #f]) (raise (skip why)))
+(define-syntax-rule (check-equal actual expected)
+  (check actual (expect-equal expected)))
+(define-syntax-rule (check-raise actual pred/rx ...)
+  (check actual (expect-raise pred/rx ...)))
+
 
 ;; ============================================================
 ;; Tests
@@ -205,21 +238,6 @@
     [(_ e:expr ...)
      #`(begin (test #:location-syntax e e) ...)]))
 
-;; A TestContext is (listof TestFrame)
-;; A TestFrame is (hash 'name (U String #f) 'loc (U source-location? #f))
-(define current-test-context (make-parameter null))
-
-;; A TestAround is a procedure ((-> Void) -> Void).
-(define current-test-arounds (make-parameter null))
-
-;; A TestListener is (TestContext TestEvent Any -> Void)
-;; where TestEvents = 'enter | 'start | 'success | 'catch
-(define current-test-listener
-  (make-parameter (lambda (c e a) (default-test-listener c e a))))
-
-(define (signal ctx event [arg #f])
-  ((current-test-listener) ctx event arg))
-
 (define (-test proc
                #:loc  loc    ;; (U source-location? #f)
                #:name name   ;; (U string? 'auto #f)
@@ -240,11 +258,11 @@
       (signal ctx 'success)
       (void))))
 
-(define ((make-selective-execution-around name-pred) proc)
-  ;; FIXME
-  (cond [(name-pred (hash-ref (car (current-test-context)) 'name))
-         (proc)]
-        [else (void)]))
+
+;; ============================================================
+
+(define KWIDTH 10)
+(define INDENT 2)
 
 (define (default-test-listener ctx event arg)
   (case event
@@ -328,9 +346,6 @@
         (print-info)
         (print-ctx 0 ctx)])]))
 
-(define KWIDTH 10)
-(define INDENT 2)
-
 (define (iprintf indent fmt . args)
   (write-string (make-string indent #\space))
   (apply printf fmt args))
@@ -339,8 +354,6 @@
 (struct formatted (fmt vs)
   #:property prop:custom-write
   (lambda (this out mode) (apply fprintf out (formatted-fmt this) (formatted-vs this))))
-
-(define current-test-value-style (make-parameter 'short))
 
 (define (print-kv i k v)
   (define space (make-string i #\space))
@@ -351,3 +364,9 @@
      (when (eq? (pretty-print-columns) 'infinity) (newline))]
     [(full) (printf "~a~a: ~v\n" space label v)]
     [else (printf "~a~a: ~e\n" space label v)]))
+
+(define ((make-selective-execution-around name-pred) proc)
+  ;; FIXME
+  (cond [(name-pred (hash-ref (car (current-test-context)) 'name))
+         (proc)]
+        [else (void)]))
