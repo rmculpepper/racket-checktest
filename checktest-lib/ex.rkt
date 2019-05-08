@@ -20,6 +20,12 @@
                 (check-equal (values 1 2) (values 2 3)))))))
 
 (test
+ #:name "error w/in check"
+ (with-info (['where "over yonder"])
+   (check 4 (lambda (v)
+              (error 'nope "nope nope\n  expected: yup yup yup")))))
+
+(test
  #:name "here"
  (with-info (['where "right here"])
    (check-equal 3 4)))

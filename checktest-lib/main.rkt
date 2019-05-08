@@ -68,11 +68,15 @@
 ;; - #f                                     -- empty context
 ;; - (vector Result Checker CheckContext)   -- nested check
 ;; - (list* Symbol Any CheckContext)        -- user context info
-(define current-check-context (make-parameter #f))
+(define check-context-key (gensym 'check-context))
+(define (current-check-context)
+  (continuation-mark-set-first #f check-context-key))
 
 (define-syntax-rule (with-info ([k v] ...) . body)
-  (parameterize ((current-check-context (list* (~@ k v) ... (current-check-context))))
-    . body))
+  (with-continuation-mark
+    check-context-key
+    (list* (~@ k v) ... (current-check-context))
+    (let () . body)))
 
 ;; ----------------------------------------
 ;; Testing context
@@ -192,7 +196,7 @@
   (define actual (call->result actual-thunk))
   (for ([checker (in-list checkers)])
     (define ctx (vector actual checker check-ctx))
-    (parameterize ((current-check-context ctx))
+    (with-continuation-mark check-context-key ctx
       (apply-checker checker actual))))
 
 (define-syntax-rule (check-equal actual expected)
@@ -326,7 +330,11 @@
             (eprintf "----------------------------------------\n")]
            [else
             (eprintf "----------------------------------------\n")
-            (eprintf "ERROR\n~e\n" arg)
+            (eprintf "~a\n" (full-test-name))
+            (eprintf "ERROR\n")
+            (parameterize ((current-output-port (current-error-port))
+                           (in-test-display? #t))
+              (print-error arg))
             (eprintf "----------------------------------------\n")])]
     [else (void)]))
 
@@ -345,20 +353,18 @@
                         [else "???"])))
                " > "))
 
+(define ERROR-CONTEXT-LENGTH 4)
+
+(define (print-error e)
+  (define message
+    (cond [(exn? e) (exn-message e)]
+          [else "value raised was not an exception"]))
+  (parameterize ((error-print-context-length ERROR-CONTEXT-LENGTH))
+    ((error-display-handler) message e))
+  (define ctx (continuation-mark-set-first (exn-continuation-marks e) check-context-key))
+  (print-ctx 0 ctx))
+
 (define (print-failure cf)
-  (define (print-ctx i ctx)
-    (when (pair? ctx) (iprintf i "with context info:\n"))
-    (let loop ([ctx ctx])
-      (match ctx
-        [(list* key value rest)
-         (print-kv (+ i INDENT) key value)
-         (loop rest)]
-        [(vector actual checker ctx)
-         (iprintf i "within another check:\n")
-         (print-kv (+ i INDENT) "actual" actual)
-         (print-kv (+ i INDENT) "checker" checker)
-         (print-ctx (+ i INDENT) ctx)]
-        [#f (void)])))
   (match cf
     [(check-failure why info ctx)
      (printf "~a: ~a\n" (~a #:width KWIDTH "FAILURE") why)
@@ -378,6 +384,20 @@
        [_
         (print-info)
         (print-ctx 0 ctx)])]))
+
+(define (print-ctx i ctx)
+  (when (pair? ctx) (iprintf i "with context info:\n"))
+  (let loop ([ctx ctx])
+    (match ctx
+      [(list* key value rest)
+       (print-kv (+ i INDENT) key value)
+       (loop rest)]
+      [(vector actual checker ctx)
+       (iprintf i "within another check:\n")
+       (print-kv (+ i INDENT) "actual" actual)
+       (print-kv (+ i INDENT) "checker" checker)
+       (print-ctx (+ i INDENT) ctx)]
+      [#f (void)])))
 
 (define (iprintf indent fmt . args)
   (write-string (make-string indent #\space))
