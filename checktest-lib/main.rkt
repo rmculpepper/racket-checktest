@@ -8,7 +8,8 @@
          racket/string
          racket/format
          racket/path
-         syntax/srcloc)
+         syntax/srcloc
+         rackunit/log)
 (provide (all-defined-out))
 
 ;; This is my bikeshed. There are many like it, but this one is mine.
@@ -322,6 +323,7 @@
             (when levels
               (eprintf "~askipping ~a\n" (prefix #\-) (short-test-name)))]
            [(check-failure? arg)
+            (test-log! #f)
             (eprintf "----------------------------------------\n")
             (eprintf "~a\n" (full-test-name))
             (parameterize ((current-output-port (current-error-port))
@@ -329,6 +331,7 @@
               (print-failure arg))
             (eprintf "----------------------------------------\n")]
            [else
+            (test-log! #f)
             (eprintf "----------------------------------------\n")
             (eprintf "~a\n" (full-test-name))
             (eprintf "ERROR\n")
@@ -336,6 +339,8 @@
                            (in-test-display? #t))
               (print-error arg))
             (eprintf "----------------------------------------\n")])]
+    [(success)
+     (test-log! #t)]
     [else (void)]))
 
 (define (test-context->string ctx)
