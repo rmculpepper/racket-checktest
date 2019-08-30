@@ -14,6 +14,13 @@
 
 ;; This is my bikeshed. There are many like it, but this one is mine.
 
+;; TODO:
+;; - with-test-info
+;; - tests that don't print in vebose mode
+;; - tests that don't continue on failure/error
+;; - call-with-test-summary (run, passed, failed)
+;; - for rackunit/log: count check vs test vs both?
+
 ;; ============================================================
 ;; Results
 
@@ -297,31 +304,23 @@
 (define KWIDTH 10)
 (define INDENT 2)
 
-(define current-test-display-levels (make-parameter #f))
+(define current-test-display-levels (make-parameter #t))
 
 (define (default-test-listener ctx event arg)
   (define levels (current-test-display-levels))
   (define (full-test-name) (test-context->string ctx))
-  (define (short-test-name)
-    (cond [(exact-positive-integer? levels)
-           (let ([levels (if (exact-positive-integer? levels) levels 1)])
-             (define len (- (length ctx) (sub1 levels)))
-             (test-context->string (take ctx (max 1 len))))]
-          [else (full-test-name)]))
-  (define (prefix char)
-    (cond [(exact-positive-integer? levels)
-           (define s (make-string (add1 levels) #\space))
-           (string-set! s (sub1 (min levels (length ctx))) char)
-           s]
-          [else ""]))
+  (define (short-test-name) (test-frame->string (car ctx)))
+  (define (prefix s)
+    (string-append (if #t s "")
+                   (make-string (* 2 (sub1 (length ctx))) #\space)))
   (case event
     [(begin)
      (when levels
-       (eprintf "~arunning ~a\n" (prefix #\+) (short-test-name)))]
+       (eprintf "~atesting ~a\n" (prefix "  ") (short-test-name)))]
     [(catch)
      (cond [(skip? arg)
             (when levels
-              (eprintf "~askipping ~a\n" (prefix #\-) (short-test-name)))]
+              (eprintf "~askipping ~a\n" (prefix "- ") (short-test-name)))]
            [(check-failure? arg)
             (test-log! #f)
             (eprintf "----------------------------------------\n")
@@ -343,20 +342,29 @@
      (test-log! #t)]
     [else (void)]))
 
+(define (test-frame->string frame [can-omit? #f])
+  (define (loc->string loc)
+    (format "[~a:~a]"
+            (let ([src (source-location-source loc)])
+              (cond [(path? src) (file-name-from-path src)]
+                    [else (or src '?)]))
+            (or (source-location-line loc) '?)))
+  (cond [(hash-ref frame 'name #f)
+         => (lambda (name)
+              (cond [(hash-ref frame 'loc #f)
+                     => (lambda (loc)
+                          (format "~a ~a" name (loc->string loc)))]
+                    [else name]))]
+        [(hash-ref frame 'loc #f) => loc->string]
+        [can-omit? #f]
+        [else "???"]))
+
 (define (test-context->string ctx)
-  (string-join (reverse
-                (for/list ([frame (in-list ctx)])
-                  (cond [(hash-ref frame 'name #f)
-                         => (lambda (name) name)]
-                        [(hash-ref frame 'loc #f)
-                         => (lambda (loc)
-                              (format "~a:~a"
-                                      (let ([src (source-location-source loc)])
-                                        (cond [(path? src) (file-name-from-path src)]
-                                              [else (or src '?)]))
-                                      (or (source-location-line loc) '?)))]
-                        [else "???"])))
-               " > "))
+  (string-join
+   (reverse
+    (for/list ([frame (in-list ctx)])
+      (test-frame->string frame)))
+   " > "))
 
 (define ERROR-CONTEXT-LENGTH 4)
 
