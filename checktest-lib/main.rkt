@@ -42,8 +42,8 @@
 ;; - in general, may receive zero or more values or a caught exception
 
 ;; TODO:
-;; - allow a PrimaryChecker to actually control the execution context of the expression
-
+;; - allow a RunnerChecker to actually control the execution context of the expression
+;;     prep : RunnerChecker -> ((-> Any) -> (-> Any)) x Checker  -- runner and checker can share state
 
 ;; TODO:
 ;; - with-test-info
@@ -51,6 +51,9 @@
 ;; - tests that don't continue on failure/error
 ;; - call-with-test-summary (run, passed, failed)
 ;; - for rackunit/log: count check vs test vs both?
+
+;; TODO:
+;; - `current-checker-conversions` for converting other values (eg, expectations) to checkers
 
 ;; ============================================================
 ;; Results
