@@ -14,6 +14,37 @@
 
 ;; This is my bikeshed. There are many like it, but this one is mine.
 
+;; Design:
+
+;; A Test is the unit of testing. A Test
+;; - returns (void), and catches exceptions (but not other escapes)
+;; - arbitrary contextual information can be attached to tests with `with-test-info`
+;; - can contain nested sub-tests (ie, no distinction between test-case and test-suite)
+;;   - sub-test failure does not abort the enclosing test (make configurable?)
+;; - tests (and sub-tests) can be selectively skipped
+
+;; Tests are generally written using `check` expressions:
+;;   (check Expr Checker ...) : Expr[Void]
+;; A `check` expression
+;; - returns (void), but raises an exception on failure to abort the enclosing test
+;; - arbitrary contextual information can be attached to checks with `with-check-info`
+;; - can contain nested sub-checks
+;;   - sub-check failure aborts enclosing check (and thus the enclosing test)
+;;   - failure reporting preserves the nesting structure: "the outer
+;;     check failed because the inner check failed" rather than just
+;;     reporting one or the other (likewise, each check keeps its check
+;;     info distinct; it is not flattened)
+;; - checks cannot be selectively skipped
+
+;; A Checker verifies properties about the behavior of an expression. A Checker
+;; - does not actually control the execution context of the expression
+;;   - TODO: allow special checkers to do so? (at most one per `check` expr?)
+;; - in general, may receive zero or more values or a caught exception
+
+;; TODO:
+;; - allow a PrimaryChecker to actually control the execution context of the expression
+
+
 ;; TODO:
 ;; - with-test-info
 ;; - tests that don't print in vebose mode
