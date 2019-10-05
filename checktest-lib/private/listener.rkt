@@ -1,5 +1,6 @@
 #lang racket/base
 (require racket/match
+         racket/list
          racket/path
          racket/string
          racket/format
@@ -8,30 +9,32 @@
          rackunit/log
          "test.rkt"
          "check.rkt")
-(provide current-test-display-levels)
+(provide current-test-display-config)
 
 ;; ============================================================
 
 (define KWIDTH 10)
 (define INDENT 2)
 
-(define current-test-display-levels (make-parameter #t))
+(define current-test-display-config
+  (make-parameter #hash((print? . #t) (skipped? . #f))))
 
 (define (default-test-listener ctx event arg)
-  (define levels (current-test-display-levels))
+  (define config (current-test-display-config))
   (define (full-test-name) (test-context->string ctx))
   (define (short-test-name) (test-frame->string (car ctx)))
   (define (prefix s)
-    (string-append (if #t s "")
-                   (make-string (* 2 (sub1 (length ctx))) #\space)))
+    (string-append (if #t s "") (make-prefix-string (sub1 (length ctx)))))
+  (define (make-prefix-string n)
+    (apply string-append (make-list n "| ")))
   (case event
     [(begin)
-     (when levels
-       (eprintf "~atesting ~a\n" (prefix "  ") (short-test-name)))]
+     (when (hash-ref config 'print? #f)
+       (eprintf "test ~a~a\n" (prefix "") (short-test-name)))]
     [(catch)
      (cond [(skip? arg)
-            (when levels
-              (eprintf "~askipping ~a\n" (prefix "- ") (short-test-name)))]
+            (when (hash-ref config 'skipped? #f)
+              (eprintf "skip ~a~a\n" (prefix "") (short-test-name)))]
            [(check-failure? arg)
             (test-log! #f)
             (eprintf "----------------------------------------\n")
@@ -44,7 +47,7 @@
             (test-log! #f)
             (eprintf "----------------------------------------\n")
             (eprintf "~a\n" (full-test-name))
-            (eprintf "ERROR\n")
+            (eprintf "ERROR ")
             (parameterize ((current-output-port (current-error-port))
                            (in-test-display? #t))
               (print-error arg))
@@ -91,7 +94,7 @@
 (define (print-failure cf)
   (match cf
     [(check-failure why info ctx)
-     (printf "~a: ~a\n" (~a #:width KWIDTH "FAILURE") why)
+     (printf "FAILURE: ~a\n" why)
      (define (print-info)
        (let loop ([info info])
          (match info

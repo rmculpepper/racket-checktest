@@ -13,6 +13,10 @@
             (check-equal (values 1 2) (values 2 3)))))
 
 (test
+ #:name "there"
+ (check 3 even?))
+
+(test
  #:name "nested"
  (test
   #:name "here"
@@ -42,7 +46,7 @@
                    (with-info (['pear 'banana])
                      (fail "nope" 'effort "minimal"))))))
 
-(current-test-display-levels 3)
+(current-test-display-config (hasheq 'print? #t 'skipped? #t))
 
 (test #:name "suite"
   (tests
