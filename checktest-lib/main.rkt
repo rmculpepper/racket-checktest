@@ -135,7 +135,7 @@
     (let () . body)))
 
 (define-syntax-rule (equal-checker expected)
-  (checker:equal (thunk->result (lambda () (#%expression expected)))))
+  (checker:equal (thunk->values-result (lambda () (#%expression expected)))))
 (define (raise-checker . pred/rx-list)
   (checker:raise pred/rx-list))
 (define (predicate-checker pred #:negate? [negate? #f] . args)

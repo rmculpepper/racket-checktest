@@ -33,9 +33,13 @@
 
 ;; thunk->result : (-> Any) -> Result
 (define (thunk->result proc)
-  (with-handlers ([(lambda (e) #t)
-                   (lambda (e) (result:raised e))])
-    (call-with-values proc (case-lambda [(v) (result:single v)] [vs (result:values vs)]))))
+  (with-handlers ([(lambda (e) #t) (lambda (e) (result:raised e))])
+    (thunk->values-result proc)))
+
+;; thunk->values-result : (-> Any) -> Result
+;; Like thunk->result, but doesn't catch exceptions.
+(define (thunk->values-result proc)
+  (call-with-values proc (case-lambda [(v) (result:single v)] [vs (result:values vs)])))
 
 ;; result->thunk : Result -> (-> Any)
 (define (result->thunk r)
