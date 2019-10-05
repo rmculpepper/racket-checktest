@@ -10,8 +10,12 @@
          racket/path
          syntax/srcloc
          rackunit/log
-         "private/result.rkt")
-(provide (all-defined-out))
+         "private/result.rkt"
+         "private/test.rkt"
+         "private/check.rkt")
+(provide (all-defined-out)
+         (all-from-out "private/test.rkt")
+         (all-from-out "private/check.rkt"))
 
 ;; This is my bikeshed. There are many like it, but this one is mine.
 
@@ -111,79 +115,9 @@
     [(_ e:expr ...)
      #`(begin (test #:location-syntax e e) ...)]))
 
-(define (run-test proc
-                  #:loc  loc    ;; (U source-location? #f)
-                  #:name name   ;; (U string? 'auto #f)
-                  #:pre pre-thunk)
-  (define ctx (cons (hasheq 'name name 'loc loc) (current-test-context)))
-  (define nested? (pair? (cdr ctx)))
-  (signal ctx 'enter)
-  (parameterize ((current-test-context ctx))
-    (with-handlers ([(lambda (e) (not (exn:break? e)))
-                     (lambda (e)
-                       (cond [(caught? e) (raise (if nested? e (caught-v e)))]
-                             [else (signal ctx 'catch e)]))])
-      (let loop ([arounds (current-test-arounds)])
-        (match arounds
-          [(cons around arounds)
-           (around (lambda () (loop arounds)))]
-          ['()
-           (when pre-thunk (pre-thunk))
-           (signal ctx 'begin)
-           (proc)]))
-      (signal ctx 'success)
-      (void))))
-
-;; wrapper for exceptions in framework code so (test _) doesn't catch them; they
-;; should actually escape and halt execution
-(struct caught (v))
-(define (call/catch proc)
-  (with-handlers ([(lambda (e) #t) (lambda (e) (raise (caught e)))]) (proc)))
-
-;; signal : TestContext TestEvent Any -> Void
-(define (signal ctx event [arg #f])
-  (call/catch (lambda () ((current-test-listener) ctx event arg))))
-
-;; ----------------------------------------
-;; Testing context
-
-;; A TestContext is (listof TestFrame)
-;; A TestFrame is (hash 'name (U String #f) 'loc (U source-location? #f))
-(define current-test-context (make-parameter null))
-
-;; A TestAround is a procedure ((-> Void) -> Void).
-(define current-test-arounds (make-parameter null))
-
-;; A TestListener is (TestContext TestEvent Any -> Void)
-;; where TestEvents = 'enter | 'start | 'success | 'catch
-(define current-test-listener
-  (make-parameter (lambda (c e a) (default-test-listener c e a))))
-
-;; current-test-value-style : parameter of (U 'short 'full 'pretty)
-(define current-test-value-style (make-parameter 'short))
-
-(define in-test-display? (make-parameter #f))
-
-;; ----------------------------------------
-;; Communicating with test
-
-(struct check-failure (why info ctx))
-(struct skip (why))
-
-(define (fail why . info)
-  (raise (check-failure why info (current-check-context))))
-
-(define (skip-test [why #f]) (raise (skip why)))
-
 
 ;; ============================================================
 ;; Check
-
-;; A Checker is an instance of a struct implementing prop:checker
-;; with a value of type (Checker Result -> Void).
-;; A predicate is coerced to a Checker via checker:predicate.
-(define-values (prop:checker checker? checker-ref)
-  (make-struct-type-property 'checker))
 
 (define-syntax check
   (syntax-parser
@@ -191,108 +125,18 @@
      #'(run-checkers (lambda () (#%expression actual))
                      (list checker.c ...))]))
 
-(define checker/c (or/c checker? (-> any/c any)))
-
-(define (run-checkers actual-thunk checkers)
-  (define check-ctx (current-check-context))
-  (define actual (thunk->result actual-thunk))
-  (for ([checker (in-list checkers)])
-    (define ctx (vector actual checker check-ctx))
-    (with-continuation-mark check-context-key ctx
-      (apply-checker checker actual))))
-
 (define-syntax-rule (check-equal actual expected)
   (check actual (expect-equal expected)))
 (define-syntax-rule (check-raise actual pred/rx ...)
   (check actual (expect-raise pred/rx ...)))
 
-;; ----------------------------------------
-;; Check info
-
-;; A CheckContext is one of
-;; - #f                                     -- empty context
-;; - (vector Result Checker CheckContext)   -- nested check
-;; - (list* Symbol Any CheckContext)        -- user context info
-(define check-context-key (gensym 'check-context))
-(define (current-check-context)
-  (continuation-mark-set-first #f check-context-key))
+(define checker/c (or/c checker? (-> any/c any)))
 
 (define-syntax-rule (with-info ([k v] ...) . body)
   (with-continuation-mark
     check-context-key
     (list* (~@ k v) ... (current-check-context))
     (let () . body)))
-
-
-;; ============================================================
-;; Checkers
-
-(struct checker:predicate (pred)
-  #:property prop:custom-write
-  (lambda (self port mode)
-    (match-define (checker:predicate pred) self)
-    (case mode
-      ((0 1) (print pred port mode))
-      ((#t) (write pred port))
-      (else (display pred port))))
-  #:property prop:checker
-  (lambda (self actual)
-    (match-define (checker:predicate pred) self)
-    (match actual
-      [(result:single value)
-       (unless (pred value)
-         (fail "does not satisfy predicate" 'predicate pred))]
-      [_ (fail "not a single value" 'predicate pred)])))
-
-(struct checker:equal (expected)
-  #:property prop:custom-write
-  (make-constructor-style-printer
-   (lambda (self) 'expect-equal)
-   (lambda (self)
-     (if (in-test-display?)
-         ;; redundant with "expected:", so suppress
-         (list (unquoted-printing-string "..."))
-         (list (checker:equal-expected self)))))
-  #:property prop:checker
-  (lambda (self actual)
-    (match-define (checker:equal expected) self)
-    (unless (equal? actual expected)
-      (fail "not equal" 'expected expected))))
-
-(struct checker:raise (preds require-exn?)
-  #:property prop:custom-write
-  (make-constructor-style-printer
-   (lambda (self)
-     (cond [(checker:raise-require-exn? self) 'expect-raise]
-           [else 'expect-raise*]))
-   (lambda (self) (checker:raise-preds self)))
-  #:property prop:checker
-  (lambda (self actual)
-    (match-define (checker:raise preds require-exn?) self)
-    (match actual
-      [(result:raised raised)
-       (define raised-msg (if (exn? raised) (exn-message raised) ""))
-       (when (and require-exn? (not (exn? raised)))
-         (fail "result is not a raised exception"))
-       (for ([pred (in-list preds)])
-         (cond [(regexp? pred)
-                (unless (exn? raised)
-                  (fail "did not raise exception" 'regexp pred))
-                (unless (regexp-match? pred raised-msg)
-                  (fail "exception message does not match regexp" 'regexp pred))]
-               [(procedure? pred)
-                (unless (pred raised)
-                  (fail (if require-exn?
-                            "exception does not satisfy predicate"
-                            "raised value does not satisfy predicate")
-                        'predicate pred))]))]
-      [_ (fail (cond [require-exn? "did not raise exception"]
-                     [else "did not raise value"]))])))
-
-;; apply-checker : Checker Result -> Void
-(define (apply-checker c result)
-  (let ([c (if (checker? c) c (checker:predicate c))])
-    ((checker-ref c) c result)))
 
 (define-syntax-rule (expect-equal expected)
   (checker:equal (thunk->result (lambda () (#%expression expected)))))
@@ -441,3 +285,7 @@
   (cond [(call/catch (lambda () (name-pred (hash-ref (car (current-test-context)) 'name))))
          (proc)]
         [else (void)]))
+
+;; ============================================================
+
+(set-default-test-listener! default-test-listener)

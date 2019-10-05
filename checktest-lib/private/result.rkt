@@ -36,3 +36,10 @@
   (with-handlers ([(lambda (e) #t)
                    (lambda (e) (result:raised e))])
     (call-with-values proc (case-lambda [(v) (result:single v)] [vs (result:values vs)]))))
+
+;; result->thunk : Result -> (-> Any)
+(define (result->thunk r)
+  (match r
+    [(result:single v) (lambda () v)]
+    [(result:values vs) (lambda () (apply values vs))]
+    [(result:raised e) (lambda () (raise e))]))
