@@ -137,10 +137,7 @@
 (define-syntax-rule (equal-checker expected)
   (checker:equal (thunk->result (lambda () (#%expression expected)))))
 (define (raise-checker . pred/rx-list)
-  (checker:raise pred/rx-list #t))
-(define (raise*-expect . pred/rx-list)
-  (checker:raise pred/rx-list #f))
-
+  (checker:raise pred/rx-list))
 (define (predicate-checker pred #:negate? [negate? #f] . args)
   (checker:predicate pred args (and negate? #t)))
 

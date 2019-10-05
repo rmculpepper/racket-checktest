@@ -72,35 +72,26 @@
     (unless (equal? actual expected)
       (fail "not equal" 'expected expected))))
 
-(struct checker:raise (preds require-exn?)
+(struct checker:raise (preds)
   #:property prop:custom-write
   (make-constructor-style-printer
-   (lambda (self)
-     (cond [(checker:raise-require-exn? self) 'raise-checker]
-           [else 'raise*-checker]))
+   (lambda (self) 'raise-checker)
    (lambda (self) (checker:raise-preds self)))
   #:property prop:checker
   (lambda (self actual)
-    (match-define (checker:raise preds require-exn?) self)
+    (match-define (checker:raise preds) self)
     (match actual
       [(result:raised raised)
-       (define raised-msg (if (exn? raised) (exn-message raised) ""))
-       (when (and require-exn? (not (exn? raised)))
-         (fail "result is not a raised exception"))
        (for ([pred (in-list preds)])
          (cond [(regexp? pred)
                 (unless (exn? raised)
-                  (fail "did not raise exception" 'regexp pred))
-                (unless (regexp-match? pred raised-msg)
+                  (fail "raised value is not exception" 'regexp pred))
+                (unless (regexp-match? pred (exn-message raised))
                   (fail "exception message does not match regexp" 'regexp pred))]
                [(procedure? pred)
                 (unless (pred raised)
-                  (fail (if require-exn?
-                            "exception does not satisfy predicate"
-                            "raised value does not satisfy predicate")
-                        'predicate pred))]))]
-      [_ (fail (cond [require-exn? "did not raise exception"]
-                     [else "did not raise value"]))])))
+                  (fail "raised value does not satisfy predicate" 'predicate pred))]))]
+      [_ (fail "did not raise exception or other value")])))
 
 ;; apply-checker : Checker Result -> Void
 (define (apply-checker c result)
