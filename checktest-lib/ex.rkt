@@ -78,6 +78,12 @@
   (define xs (range 1000))
   (check-equal xs (cdr xs)))
 
-(test #:name "sleepy"
+#|
+(test #:name "sleepy test"
   (test (sleep 2))
-  (test (printf "aaaargh!\n")))
+  (test (printf "woke up\n")))
+
+(test #:name "sleepy check"
+  (test (check-equal (begin (sleep 2) 'ok) 'ok))
+  (test (printf "woke up\n")))
+|#
