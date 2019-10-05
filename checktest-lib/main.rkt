@@ -122,9 +122,9 @@
                      (list checker.c ...))]))
 
 (define-syntax-rule (check-equal actual expected)
-  (check actual (expect-equal expected)))
+  (check actual (equal-checker expected)))
 (define-syntax-rule (check-raise actual pred/rx ...)
-  (check actual (expect-raise pred/rx ...)))
+  (check actual (raise-checker pred/rx ...)))
 
 (define checker/c (or/c checker? (-> any/c any)))
 
@@ -134,13 +134,15 @@
     (list* (~@ k v) ... (current-check-context))
     (let () . body)))
 
-(define-syntax-rule (expect-equal expected)
+(define-syntax-rule (equal-checker expected)
   (checker:equal (thunk->result (lambda () (#%expression expected)))))
-(define (expect-raise . pred/rx-list)
+(define (raise-checker . pred/rx-list)
   (checker:raise pred/rx-list #t))
-(define (expect-raise* . pred/rx-list)
+(define (raise*-expect . pred/rx-list)
   (checker:raise pred/rx-list #f))
 
+(define (predicate-checker pred #:negate? [negate? #f] . args)
+  (checker:predicate pred args (and negate? #t)))
 
 ;; ============================================================
 

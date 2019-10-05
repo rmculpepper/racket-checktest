@@ -40,27 +40,27 @@
 (define-values (prop:checker checker? checker-ref)
   (make-struct-type-property 'checker))
 
-(struct checker:predicate (pred)
+(struct checker:predicate (pred args negate?)
   #:property prop:custom-write
-  (lambda (self port mode)
-    (match-define (checker:predicate pred) self)
-    (case mode
-      ((0 1) (print pred port mode))
-      ((#t) (write pred port))
-      (else (display pred port))))
+  (make-constructor-style-printer
+   (lambda (self) 'predicate-checker)
+   (lambda (self)
+     (match-define (checker:predicate pred args negate?) self)
+     (append (cons pred args)
+             (if negate? (list (unquoted-printing-string "#:negate?") negate?) null))))
   #:property prop:checker
   (lambda (self actual)
-    (match-define (checker:predicate pred) self)
+    (match-define (checker:predicate pred args negate?) self)
     (match actual
       [(result:single value)
-       (unless (pred value)
-         (fail "does not satisfy predicate" 'predicate pred))]
-      [_ (fail "not a single value" 'predicate pred)])))
+       (unless ((if negate? not values) (apply pred value args))
+         (fail "does not satisfy predicate" #| 'predicate pred |#))]
+      [_ (fail "not a single value" #| 'predicate pred |#)])))
 
 (struct checker:equal (expected)
   #:property prop:custom-write
   (make-constructor-style-printer
-   (lambda (self) 'expect-equal)
+   (lambda (self) 'equal-checker)
    (lambda (self)
      (if (in-test-display?)
          ;; redundant with "expected:", so suppress
@@ -76,8 +76,8 @@
   #:property prop:custom-write
   (make-constructor-style-printer
    (lambda (self)
-     (cond [(checker:raise-require-exn? self) 'expect-raise]
-           [else 'expect-raise*]))
+     (cond [(checker:raise-require-exn? self) 'raise-checker]
+           [else 'raise*-checker]))
    (lambda (self) (checker:raise-preds self)))
   #:property prop:checker
   (lambda (self actual)
@@ -104,5 +104,5 @@
 
 ;; apply-checker : Checker Result -> Void
 (define (apply-checker c result)
-  (let ([c (if (checker? c) c (checker:predicate c))])
+  (let ([c (if (checker? c) c (checker:predicate c null #f))])
     ((checker-ref c) c result)))
