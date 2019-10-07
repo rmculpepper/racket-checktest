@@ -23,12 +23,12 @@
            (when pre-thunk (pre-thunk))
            (signal ctx 'begin)
            (proc)]))
-      (signal ctx 'success)
+      (signal ctx 'exit)
       (void))))
 
 ;; wrapper for exceptions in framework code so (test _) doesn't catch them; they
 ;; should actually escape and halt execution
-(struct caught (v))
+(struct caught (v) #:transparent)
 (define (call/catch proc)
   (with-handlers ([(lambda (e) #t) (lambda (e) (raise (caught e)))]) (proc)))
 

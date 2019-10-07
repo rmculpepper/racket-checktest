@@ -11,16 +11,27 @@
          "check.rkt")
 (provide current-test-display-config)
 
+(define-logger checker)
+
 ;; ============================================================
 
 (define KWIDTH 10)
 (define INDENT 2)
 
-(define current-test-display-config
-  (make-parameter #hash((print? . #t) (skipped? . #f))))
+(define current-test-display-config (make-parameter '#hash()))
+
+(define (config-ref key default)
+  (hash-ref (current-test-display-config) key default))
+(define (config:print-test?)
+  (config-ref 'print-test? #f))
+(define (config:print-skipped?)
+  (and (config:print-test?) (config-ref 'print-skipped? #f)))
+(define (config:error-context-length)
+  (config-ref 'error-context-length 4))
+(define (config:value-style)
+  (config-ref 'value-style 'short))
 
 (define (default-test-listener ctx event arg)
-  (define config (current-test-display-config))
   (define (full-test-name) (test-context->string ctx))
   (define (short-test-name) (test-frame->string (car ctx)))
   (define (prefix s)
@@ -28,15 +39,20 @@
   (define (make-prefix-string n)
     (apply string-append (make-list n "| ")))
   (case event
+    [(enter)
+     (log-checker-info "enter: ~a" (full-test-name))]
     [(begin)
-     (when (hash-ref config 'print? #f)
+     ;;(log-checker-info "running: ~a" (full-test-name))
+     (when (config:print-test?)
        (eprintf "test ~a~a\n" (prefix "") (short-test-name)))]
     [(catch)
      (cond [(skip? arg)
-            (when (hash-ref config 'skipped? #f)
+            (log-checker-info "skipping: ~a" (full-test-name))
+            (when (config:print-skipped?)
               (eprintf "skip ~a~a\n" (prefix "") (short-test-name)))]
            [(check-failure? arg)
             (test-log! #f)
+            (log-checker-info "failure: ~a" (full-test-name))
             (eprintf "----------------------------------------\n")
             (eprintf "~a\n" (full-test-name))
             (parameterize ((current-output-port (current-error-port))
@@ -45,14 +61,16 @@
             (eprintf "----------------------------------------\n")]
            [else
             (test-log! #f)
+            (log-checker-info "error: ~a" (full-test-name))
             (eprintf "----------------------------------------\n")
             (eprintf "~a\n" (full-test-name))
-            (eprintf "ERROR ")
+            (eprintf "ERROR: ")
             (parameterize ((current-output-port (current-error-port))
                            (in-test-display? #t))
               (print-error arg))
             (eprintf "----------------------------------------\n")])]
-    [(success)
+    [(exit)
+     (log-checker-info "exit: ~a" (full-test-name))
      (test-log! #t)]
     [else (void)]))
 
@@ -80,13 +98,11 @@
       (test-frame->string frame)))
    " > "))
 
-(define ERROR-CONTEXT-LENGTH 4)
-
 (define (print-error e)
   (define message
     (cond [(exn? e) (exn-message e)]
           [else "value raised was not an exception"]))
-  (parameterize ((error-print-context-length ERROR-CONTEXT-LENGTH))
+  (parameterize ((error-print-context-length (config:error-context-length)))
     ((error-display-handler) message e))
   (define ctx (continuation-mark-set-first (exn-continuation-marks e) check-context-key))
   (print-ctx 0 ctx))
@@ -95,36 +111,41 @@
   (match cf
     [(check-failure why info ctx)
      (printf "FAILURE: ~a\n" why)
-     (define (print-info)
-       (let loop ([info info])
-         (match info
-           [(list* key value rest)
-            (print-kv 0 key value)
-            (loop rest)]
-           ['() (void)])))
      (match ctx
        [(vector actual checker ctx)
-        (print-kv 0 "actual" actual)
-        (print-info)
-        (print-kv 0 "checker" checker)
+        (let ([info (append (list "actual" actual) info (list "checker" checker))])
+          (print-info 0 info))
         (print-ctx 0 ctx)]
        [_
-        (print-info)
+        (print-info 0 info)
         (print-ctx 0 ctx)])]))
+
+(define (print-info i info [k void])
+  (define w
+    (let loop ([info info])
+      (match info
+        [(list* key value rest)
+         (max (string-length (format "~a" key)) (loop rest))]
+        [_ 0])))
+  (let loop ([info info])
+    (match info
+      [(list* key value rest)
+       (print-kv i w key value)
+       (loop rest)]
+      [end (k end)])))
 
 (define (print-ctx i ctx)
   (when (pair? ctx) (iprintf i "with context info:\n"))
-  (let loop ([ctx ctx])
-    (match ctx
-      [(list* key value rest)
-       (print-kv (+ i INDENT) key value)
-       (loop rest)]
-      [(vector actual checker ctx)
-       (iprintf i "within another check:\n")
-       (print-kv (+ i INDENT) "actual" actual)
-       (print-kv (+ i INDENT) "checker" checker)
-       (print-ctx (+ i INDENT) ctx)]
-      [#f (void)])))
+  (print-info (+ i INDENT) ctx
+              (lambda (end)
+                (match end
+                  [(vector actual checker ctx)
+                   (iprintf i "within another check:\n")
+                   (print-info (+ i INDENT)
+                               (list "actual" actual
+                                     "checker" checker))
+                   (print-ctx (+ i INDENT) ctx)]
+                  [#f (void)]))))
 
 (define (iprintf indent fmt . args)
   (write-string (make-string indent #\space))
@@ -135,14 +156,15 @@
   #:property prop:custom-write
   (lambda (this out mode) (apply fprintf out (formatted-fmt this) (formatted-vs this))))
 
-(define (print-kv i k v)
+(define (print-kv i w k0 v)
   (define space (make-string i #\space))
-  (define label (~a #:min-width KWIDTH k))
-  (case (current-test-value-style)
+  (define k (format "~a" k0))
+  (define kspace (make-string (max 0 (- w (string-length k))) #\space))
+  (case (config:value-style)
     [(pretty)
-     (pretty-print (formatted "~a~a: ~v" (list space label v)))
+     (pretty-print (formatted "~a~a: ~a~v" (list space k kspace v)))
      (when (eq? (pretty-print-columns) 'infinity) (newline))]
-    [(full) (printf "~a~a: ~v\n" space label v)]
-    [else (printf "~a~a: ~e\n" space label v)]))
+    [(full) (printf "~a~a: ~a~v\n" space k kspace v)]
+    [else (printf "~a~a: ~a~e\n" space k kspace v)]))
 
 (set-default-test-listener! default-test-listener)
