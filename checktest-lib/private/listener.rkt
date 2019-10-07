@@ -40,9 +40,9 @@
     (apply string-append (make-list n "| ")))
   (case event
     [(enter)
-     (log-checker-info "enter: ~a" (full-test-name))]
+     (log-checker-debug "enter: ~a" (full-test-name))]
     [(begin)
-     ;;(log-checker-info "running: ~a" (full-test-name))
+     (log-checker-info "running: ~a" (full-test-name))
      (when (config:print-test?)
        (eprintf "test ~a~a\n" (prefix "") (short-test-name)))]
     [(catch)
@@ -70,7 +70,7 @@
               (print-error arg))
             (eprintf "----------------------------------------\n")])]
     [(exit)
-     (log-checker-info "exit: ~a" (full-test-name))
+     (log-checker-debug "exit: ~a" (full-test-name))
      (test-log! #t)]
     [else (void)]))
 
