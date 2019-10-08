@@ -22,10 +22,14 @@
 
 (define (config-ref key default)
   (hash-ref (current-test-display-config) key default))
-(define (config:print-test?)
-  (config-ref 'print-test? #f))
-(define (config:print-skipped?)
-  (and (config:print-test?) (config-ref 'print-skipped? #f)))
+(define (config:print-test? name)
+  (and (config-ref 'print-test? #f)
+       (regexp-match? (config:print-test-rx) name)))
+(define (config:print-test-rx)
+  ;; by default, skip with empty or missing names or with names starting with "_"
+  (config-ref 'print-test-rx #rx"^[^_]"))
+(define (config:print-skipped? name)
+  (and (config:print-test? name) (config-ref 'print-skipped? #f)))
 (define (config:error-context-length)
   (config-ref 'error-context-length 4))
 (define (config:value-style)
@@ -38,17 +42,18 @@
     (string-append (if #t s "") (make-prefix-string (sub1 (length ctx)))))
   (define (make-prefix-string n)
     (apply string-append (make-list n "| ")))
+  (define (immediate-test-name) (or (hash-ref (car ctx) 'name #f) ""))
   (case event
     [(enter)
      (log-checker-debug "enter: ~a" (full-test-name))]
     [(begin)
      (log-checker-info "running: ~a" (full-test-name))
-     (when (config:print-test?)
+     (when (config:print-test? (immediate-test-name))
        (eprintf "test ~a~a\n" (prefix "") (short-test-name)))]
     [(catch)
      (cond [(skip? arg)
             (log-checker-info "skipping: ~a" (full-test-name))
-            (when (config:print-skipped?)
+            (when (config:print-skipped? (immediate-test-name))
               (eprintf "skip ~a~a\n" (prefix "") (short-test-name)))]
            [(check-failure? arg)
             (test-log! #f)
