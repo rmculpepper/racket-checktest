@@ -18,7 +18,8 @@
 (define KWIDTH 10)
 (define INDENT 2)
 
-(define current-test-display-config (make-parameter '#hash()))
+(define current-test-display-config
+  (make-parameter (hasheq 'print-test? #f)))
 
 (define (config-ref key default)
   (hash-ref (current-test-display-config) key default))
@@ -79,11 +80,12 @@
      (test-log! #t)]
     [else (void)]))
 
-(define (test-frame->string frame [can-omit? #f])
+(define (test-frame->string frame [can-omit? #f] #:last-path [last-path #f])
   (define (loc->string loc)
     (format "[~a:~a]"
             (let ([src (source-location-source loc)])
-              (cond [(path? src) (file-name-from-path src)]
+              (cond [(and last-path (equal? last-path src)) ""]
+                    [(path? src) (file-name-from-path src)]
                     [else (or src '?)]))
             (or (source-location-line loc) '?)))
   (cond [(hash-ref frame 'name #f)
@@ -96,11 +98,17 @@
         [can-omit? #f]
         [else "???"]))
 
+(define ABBREV-LAST-PATH? #t)
+
 (define (test-context->string ctx)
   (string-join
-   (reverse
-    (for/list ([frame (in-list ctx)])
-      (test-frame->string frame)))
+   (for/fold ([acc null] [last-path #f] #:result (reverse acc))
+             ([frame (in-list (reverse ctx))])
+     (values (cons (test-frame->string frame #:last-path last-path) acc)
+             (and ABBREV-LAST-PATH?
+                  (let* ([loc (hash-ref frame 'loc #f)]
+                         [src (and loc (source-location-source loc))])
+                    (and (path? src) src)))))
    " > "))
 
 (define (print-error e)
