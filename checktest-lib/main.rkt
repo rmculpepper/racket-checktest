@@ -122,8 +122,9 @@
 (define-syntax check
   (syntax-parser
     [(_ actual:expr (~var checker (expr/c #'checker/c)) ...)
-     #'(run-checkers (lambda () (#%expression actual))
-                     (list checker.c ...))]))
+     #`(run-checkers (lambda () (#%expression actual))
+                     (list checker.c ...)
+                     #,(stx->loc-expr this-syntax))]))
 
 (define checker/c (or/c checker? (-> any/c any)))
 

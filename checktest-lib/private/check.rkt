@@ -8,11 +8,11 @@
 ;; ============================================================
 ;; Check
 
-(define (run-checkers actual-thunk checkers)
+(define (run-checkers actual-thunk checkers [loc #f])
   (define check-ctx (current-check-context))
   (define actual (thunk->result actual-thunk))
   (for ([checker (in-list checkers)])
-    (define ctx (vector actual checker check-ctx))
+    (define ctx (vector actual checker loc check-ctx))
     (with-continuation-mark check-context-key ctx
       (apply-checker checker actual))))
 
@@ -20,9 +20,9 @@
 ;; Check info
 
 ;; A CheckContext is one of
-;; - #f                                     -- empty context
-;; - (vector Result Checker CheckContext)   -- nested check
-;; - (list* Symbol Any CheckContext)        -- user context info
+;; - #f                                       -- empty context
+;; - (vector Result Checker Loc CheckContext) -- nested check
+;; - (list* Symbol Any CheckContext)          -- user context info
 (define check-context-key (gensym 'check-context))
 (define (current-check-context)
   (continuation-mark-set-first #f check-context-key))

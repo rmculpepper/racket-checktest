@@ -125,13 +125,23 @@
     [(check-failure why info ctx)
      (printf "FAILURE: ~a\n" why)
      (match ctx
-       [(vector actual checker ctx)
-        (let ([info (append (list "actual" actual) info (list "checker" checker))])
+       [(vector actual checker loc ctx)
+        (let ([info (add-check-info actual checker loc info)])
           (print-info 0 info))
         (print-ctx 0 ctx)]
        [_
         (print-info 0 info)
         (print-ctx 0 ctx)])]))
+
+(define (add-check-info actual checker loc info)
+  (define (loc->string loc)
+    (format "~a:~a" (source-location-source loc) (source-location-line loc)))
+  (append (list "actual" actual)
+          info
+          (list "checker" checker)
+          (if loc
+              (list "location" (unquoted-printing-string (loc->string loc)))
+              null)))
 
 (define (print-info i info [k void])
   (define w
@@ -152,11 +162,9 @@
   (print-info (+ i INDENT) ctx
               (lambda (end)
                 (match end
-                  [(vector actual checker ctx)
+                  [(vector actual checker loc ctx)
                    (iprintf i "within another check:\n")
-                   (print-info (+ i INDENT)
-                               (list "actual" actual
-                                     "checker" checker))
+                   (print-info (+ i INDENT) (add-check-info actual checker loc null))
                    (print-ctx (+ i INDENT) ctx)]
                   [#f (void)]))))
 
