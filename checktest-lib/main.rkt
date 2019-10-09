@@ -4,6 +4,7 @@
          racket/match
          racket/contract/base
          racket/struct
+         syntax/srcloc
          "private/result.rkt"
          "private/test.rkt"
          "private/check.rkt"
@@ -92,7 +93,8 @@
     (pattern (~seq #:location-syntax term)
              #:with location (stx->loc-expr #'term)))
   (define-splicing-syntax-class test-pre-clause
-    (pattern (~seq #:pre pre:expr)))
+    (pattern (~seq #:pre pre:expr))
+    (pattern (~seq #:when c:expr) #:with pre #'(unless c (skip-test))))
   )
 
 (define-syntax test
@@ -121,11 +123,6 @@
      #'(run-checkers (lambda () (#%expression actual))
                      (list checker.c ...))]))
 
-(define-syntax-rule (check-equal actual expected)
-  (check actual (equal-checker expected)))
-(define-syntax-rule (check-raise actual pred/rx ...)
-  (check actual (raise-checker pred/rx ...)))
-
 (define checker/c (or/c checker? (-> any/c any)))
 
 (define-syntax-rule (with-info ([k v] ...) . body)
@@ -140,6 +137,20 @@
   (checker:raise pred/rx-list))
 (define (predicate-checker pred #:negate? [negate? #f] . args)
   (checker:predicate pred args (and negate? #t)))
+
+(define-syntax-rule (check-equal actual expected)
+  (check actual (equal-checker expected)))
+(define-syntax-rule (check-raise actual pred/rx ...)
+  (check actual (raise-checker pred/rx ...)))
+
+(define-syntax-rule (check-true e) (check-equal e #t))
+(define-syntax-rule (check-false e) (check-equal e #f))
+(define-syntax-rule (check-truish e) (check e truish?))
+
+(define (truish? v) (and v #t))
+
+(define-syntax check-equal? (make-rename-transformer #'check-equal))
+(define-syntax with-check-info (make-rename-transformer #'with-info))
 
 ;; ============================================================
 

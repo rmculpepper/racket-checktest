@@ -9,8 +9,8 @@
                   #:pre pre-thunk)
   (define ctx (cons (hasheq 'name name 'loc loc) (current-test-context)))
   (define nested? (pair? (cdr ctx)))
-  (signal ctx 'enter)
   (parameterize ((current-test-context ctx))
+    (signal ctx 'enter)
     (with-handlers ([(lambda (e) (not (exn:break? e)))
                      (lambda (e)
                        (cond [(caught? e) (raise (if nested? e (caught-v e)))]
@@ -22,9 +22,9 @@
           ['()
            (when pre-thunk (pre-thunk))
            (signal ctx 'begin)
-           (proc)]))
-      (signal ctx 'exit)
-      (void))))
+           (proc)])))
+    (signal ctx 'exit)
+    (void)))
 
 ;; wrapper for exceptions in framework code so (test _) doesn't catch them; they
 ;; should actually escape and halt execution
@@ -50,9 +50,6 @@
 ;; where TestEvents = 'enter | 'start | 'success | 'catch
 (define current-test-listener
   (make-parameter (lambda (c e a) (default-test-listener c e a))))
-
-;; current-test-value-style : parameter of (U 'short 'full 'pretty)
-(define current-test-value-style (make-parameter 'short))
 
 (define in-test-display? (make-parameter #f))
 

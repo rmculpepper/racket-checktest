@@ -1,5 +1,5 @@
 #lang racket/base
-(require "main.rkt")
+(require "main.rkt" "ex-help.rkt")
 (require racket/list)
 
 #;
@@ -87,3 +87,21 @@
   (test (check-equal (begin (sleep 2) 'ok) 'ok))
   (test (printf "woke up\n")))
 |#
+
+(test #:name "real list"
+      (test-list '(1 2 3)))
+(test #:name "empty list"
+      (test-list '()))
+(test #:name "improper list"
+      (test-list '(a . b)))
+
+(module foo racket/base
+  (require "main.rkt")
+  (provide subtest)
+  (define (subtest)
+    (test #:name "in a submod"
+          (check 1 even?))))
+(require 'foo)
+
+(test #:name "test from submod"
+      (subtest))
