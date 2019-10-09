@@ -57,6 +57,8 @@
 ;; TODO:
 ;; - `current-checker-conversions` for converting other values (eg, expectations) to checkers
 
+;; TODO:
+;; - `print-test-summary` print "N tests passed"/"K tests failed, N tests passed"
 
 
 ;; ============================================================
